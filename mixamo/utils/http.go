@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+const (
+	RetryLimit = 10
+)
+
 func BuildHeader(r *http.Request) {
 	for k, v := range config.Headers {
 		if k == "Cookie" {
@@ -23,7 +27,7 @@ func Request(client *http.Client, r *http.Request, retry int) ([]byte, error) {
 	var resp *http.Response
 	resp, err = client.Do(r)
 	if err != nil || (resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted) {
-		if retry > 10 {
+		if retry > RetryLimit {
 			return nil, err
 		}
 		time.Sleep(2 * time.Second)
@@ -32,7 +36,7 @@ func Request(client *http.Client, r *http.Request, retry int) ([]byte, error) {
 	respData, err := ioutil.ReadAll(resp.Body)
 	defer resp.Body.Close()
 	if err != nil {
-		if retry > 10 {
+		if retry > RetryLimit {
 			return nil, err
 		}
 		time.Sleep(2 * time.Second)

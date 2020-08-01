@@ -6,42 +6,48 @@ import (
 )
 
 type DownloadTask struct {
-	CharacterName string     `json:"character_name"`
-	CharacterID   string     `json:"character_id"`
-	GetProductURL string     `json:"get_product_url"`
-	Product       *Product   `json:"product"`
-	Monitor       *Monitor   `json:"monitor"`
-	MonitorURL    string     `json:"monitor_url"`
-	AwsURL        string     `json:"aws_url"`
-	FilePath      string     `json:"file_path"`
-	Animation     *Animation `json:"animation"`
+	CharacterName  string     `json:"character_name"`
+	CharacterID    string     `json:"character_id"`
+	GetProductURL  string     `json:"get_product_url"`
+	Product        *Product   `json:"product"`
+	Monitor        *Monitor   `json:"monitor"`
+	MonitorURL     string     `json:"monitor_url"`
+	AwsURL         string     `json:"aws_url"`
+	TargetFullPath string     `json:"target_full_path"`
+	TempFullPath   string     `json:"temp_full_path"`
+	Animation      *Animation `json:"animation"`
 
 	IsDone bool  `json:"is_done"`
 	Error  error `json:"error"`
 
-	DataDirPath string
+	LocationDir string
 	ExportBody  string
 	Step        string
 	Written     int64
 }
 
-const(
+const (
 	FinalFileFormat = "%s---%s"
 )
 
-func (t *DownloadTask) GetFilePath() string {
-	if len(t.FilePath) > 0 {
-		return t.FilePath
+func (t *DownloadTask) GetTempPath() string {
+	t.GetTargetPath()
+	return t.TempFullPath
+}
+
+func (t *DownloadTask) GetTargetPath() string {
+	if len(t.TargetFullPath) > 0 {
+		return t.TargetFullPath
 	}
-	fPath := filepath.Join(t.DataDirPath, t.Animation.Name)
+	ext := ".fbx"
+	if t.Animation.Type != "Motion" {
+		ext = ".zip"
+	}
+	fPath := filepath.Join(t.LocationDir, t.Animation.Name)
 	fPath = fmt.Sprintf(FinalFileFormat, fPath, t.Animation.Id)
-	if t.Animation.Type == "Motion" {
-		fPath += ".fbx"
-	} else {
-		fPath += ".zip"
-	}
-	t.FilePath = fPath
-	return t.FilePath
+	t.TempFullPath = fPath + ".tmp" + ext
+	t.TargetFullPath = fPath + ext
+	return t.TargetFullPath
 }
 
 func (t *DownloadTask) ToString() string {

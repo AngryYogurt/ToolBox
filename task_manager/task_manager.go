@@ -27,7 +27,7 @@ func NewTask(params []*TaskParam, handle func(p *TaskParam) *TaskResult) *Task {
 	return &Task{
 		Params:  params,
 		Handle:  handle,
-		Results: make([]*TaskResult, 0),
+		Results: make([]*TaskResult, len(params)),
 	}
 }
 
@@ -52,13 +52,13 @@ func (t *TaskManager) Start() *sync.WaitGroup {
 			p := <-c
 			for p >= 0 {
 				time.Sleep(t.Interval)
-				t.Task.Results = append(t.Task.Results, t.Task.Handle(t.Task.Params[p]))
+				t.Task.Results[p] = t.Task.Handle(t.Task.Params[p])
 				p = <-c
 			}
 			c <- -1
 			wg.Done()
 		}()
-		time.Sleep(200*time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 	return wg
 }
