@@ -8,6 +8,7 @@ import (
 	"github.com/AngryYogurt/ToolBox/mixamo/model"
 	"github.com/AngryYogurt/ToolBox/mixamo/utils"
 	"github.com/AngryYogurt/ToolBox/task_manager"
+	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
 	"io/ioutil"
 	"log"
@@ -27,42 +28,58 @@ var client *http.Client
 var re *regexp.Regexp
 
 var RecordFile = "record.txt"
-var GoroutineCount = 50
-var Step = 100
+var recordF *os.File
+var GoroutineCount = 200
+var Step = 200
+
+func init() {
+	re = regexp.MustCompile(`(?m).*filename="(.+?\..+?)".*`)
+	client = &http.Client{}
+	log.SetOutput(&lumberjack.Logger{
+		Filename: "./mixamo/data/output.log",
+		MaxSize:  50, // megabytes
+	})
+
+}
+
+const (
+	Info = iota
+	Error
+	Important
+)
+
+func Log(level int, v ...interface{}) {
+	lv := "unknown"
+	switch level {
+	case Info:
+		lv = "Info"
+	case Error:
+		lv = "Error"
+	case Important:
+		lv = "Important"
+	}
+	log.Println(lv, v)
+}
 
 func main() {
-	logfile, err := os.OpenFile("./mixamo/data/output.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0755)
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	log.SetOutput(logfile)
-	defer logfile.Close()
-	re = regexp.MustCompile(`(?m).*filename="(.+?\..+?)".*`)
+	var err error
+	defer recordF.Close()
 
-	client = &http.Client{}
 	InitAnimationList()
-	// TODO
-	//t := make([]*model.Animation, 0)
-	//t = append(t, Animations[0])
-	//for i, v := range Animations {
-	//	if len(v.Motions) > 0 {
-	//		t = append(t, Animations[i])
-	//		break
-	//	}
-	//}
-	//Animations = t
-	//for _, v := range Animations {
-	//	fmt.Println(v.Name)
-	//	fmt.Println(v.Motions)
-	//}
-	// End TODO
-
 	// Start
+
 	start, step := 0, Step
 	for start < len(Animations) {
 		end := start + step
+		if recordF != nil {
+			recordF.Close()
+		}
 		RecordFile = fmt.Sprintf("record_%d_%d.txt", start, end-1)
+		recordF, err = os.OpenFile(filepath.Join(config.DataDir, RecordFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			Log(Error, err)
+		}
+
 		if end > len(Animations) {
 			end = len(Animations)
 		}
@@ -71,45 +88,16 @@ func main() {
 		initCharacterDirs(dls)
 		Download(dls)
 		start = end
+		Log(Important, fmt.Sprintf("finish range %d ~ %d", start, end-1))
 	}
 	return
-}
-
-func Download2(dt *model.DownloadTask) error {
-	var err error
-	// Step 2: get product gms hash
-	dt.Step = "start getProduct"
-	err = getProduct(dt)
-	if err != nil {
-		return err
-	}
-	// Step 3: export animation from server to aws
-	dt.Step = "start exportAnim"
-	err = exportAnim(dt)
-	if err != nil {
-		return err
-	}
-	// Step 4: monitor export status
-	dt.Step = "start monitor"
-	err = monitor(dt)
-	if err != nil {
-		return err
-	}
-	// Step 5: download from aws
-	dt.Step = "start downloadAws"
-	err = downloadAws(dt)
-	if err != nil {
-		return err
-	}
-	dt.IsDone = true
-	return err
 }
 
 func initCharacterDirs(dls []*model.DownloadTask) {
 	for i, _ := range dls {
 		path := filepath.Join(config.DataDir, strings.ReplaceAll(dls[i].CharacterName, "/", " "))
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			err := os.Mkdir(path, os.ModeDir)
+			err := os.Mkdir(path, os.ModeDir|os.ModePerm)
 			if err != nil {
 				log.Fatalln(err)
 			}
@@ -123,13 +111,8 @@ var mu = &sync.Mutex{}
 func writeRecord(line string) {
 	mu.Lock()
 	defer mu.Unlock()
-	f, err := os.OpenFile(filepath.Join(config.DataDir, RecordFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Println(err)
-	}
-	defer f.Close()
-	if _, err := f.WriteString(line); err != nil {
-		log.Println(err)
+	if _, err := recordF.WriteString(line); err != nil {
+		Log(Error, err)
 	}
 }
 
@@ -184,7 +167,7 @@ func InitAnimationList() {
 			result.Err = err
 		}
 		result.Result = animResp
-		log.Printf("totalPage = %d, current page = %d, result count=%d\n", totalPage, page, animResp.Pagination.NumResults)
+		Log(Info, "totalPage = %d, current page = %d, result count=%d\n", totalPage, page, animResp.Pagination.NumResults)
 		return result
 	}), 2)
 	tm.Start().Wait()
@@ -247,10 +230,25 @@ func Download(dls []*model.DownloadTask) {
 	for k, v := range result {
 		if v.Err != nil {
 			dt, _ := (result[k].Result).(model.DownloadTask)
-			log.Println(fmt.Sprintf("err=%v, failed task: %s", v.Err, dt.ToString()))
+			Log(Error, fmt.Sprintf("err=%v, failed task: %s", v.Err, dt.ToString()))
 
 		}
 	}
+}
+
+func checkExist(dt *model.DownloadTask) bool {
+	fPath := filepath.Join(dt.DataDirPath, dt.Animation.Name)
+	if dt.Animation.Type == "Motion" {
+		fPath += ".fbx"
+	} else {
+		fPath += ".zip"
+	}
+	if info, err := os.Stat(fPath); !os.IsNotExist(err) && info.Size() > 0 {
+		// file exist
+		err = fmt.Errorf("duplicated download")
+		return true
+	}
+	return false
 }
 
 func handleDownload(p *task_manager.TaskParam) *task_manager.TaskResult {
@@ -258,7 +256,10 @@ func handleDownload(p *task_manager.TaskParam) *task_manager.TaskResult {
 	result := &task_manager.TaskResult{}
 	d, ok := (*p).(model.DownloadTask)
 	dt := &d
-	log.Println(fmt.Sprintf("start process c: %s, a:%s", dt.CharacterID, dt.Animation.Id))
+	if checkExist(dt) {
+		return result
+	}
+	Log(Info, fmt.Sprintf("start c: %s, a:%s", dt.CharacterID, dt.Animation.Id))
 	if !ok {
 		result.Err = fmt.Errorf("format param error")
 		dt.Error = result.Err
@@ -292,8 +293,9 @@ func handleDownload(p *task_manager.TaskParam) *task_manager.TaskResult {
 		result.Err = err
 		return result
 	}
-	writeRecord(fmt.Sprintf("%sc|a%s\n", dt.CharacterID, dt.Animation.Id))
+	writeRecord(fmt.Sprintf("%s|%s\n", dt.CharacterID, dt.Animation.Id))
 	dt.IsDone = true
+	Log(Info, fmt.Sprintf("finish proc task=%s", dt.ToString()))
 	result.Result = dt
 	return result
 }
@@ -301,7 +303,7 @@ func handleDownload(p *task_manager.TaskParam) *task_manager.TaskResult {
 func downloadAws(dt *model.DownloadTask) error {
 	resp, err := client.Get(dt.AwsURL)
 	if err != nil || resp.StatusCode != http.StatusOK {
-		log.Println(err, resp)
+		Log(Error, err, resp)
 		return err
 	}
 	defer resp.Body.Close()
@@ -313,12 +315,12 @@ func downloadAws(dt *model.DownloadTask) error {
 	}
 	out, err := os.Create(dt.FilePath)
 	if err != nil {
-		log.Println(err)
+		Log(Error, err)
 	}
 	dt.Written, err = io.Copy(out, resp.Body)
 	if err != nil || dt.Written <= 0 {
 		err = fmt.Errorf("download aws error, err=%s, written=%d", err, dt.Written)
-		log.Println(err)
+		Log(Error, err)
 	}
 	defer out.Close()
 	return err
@@ -345,12 +347,9 @@ func monitor(dt *model.DownloadTask) error {
 				return err
 			}
 			dt.Monitor = exp
-			log.Println(fmt.Sprintf("char=%s", dt.CharacterName))
-			log.Println(fmt.Sprintf("time=%s", req.Header.Get("Cookie")[339:]))
-			log.Println(fmt.Sprintf("awsurl=%s", exp.JobResult))
 		default:
 			s := fmt.Sprintf("unexpected monitor status: %s, msg: %s", dt.Monitor.Status, dt.Monitor.Message)
-			log.Println(s)
+			Log(Error, s)
 			err = fmt.Errorf(s)
 			dt.Error = err
 			return err
@@ -370,8 +369,6 @@ func getProduct(dt *model.DownloadTask) error {
 		return err
 	}
 	dt.Product = prod
-	log.Printf("finish get product")
-
 	return nil
 }
 
