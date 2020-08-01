@@ -160,7 +160,10 @@ func InitAnimationList() {
 		u := fmt.Sprintf(config.AnimationListURL, page)
 		req, _ := http.NewRequest(http.MethodGet, u, nil)
 		utils.BuildHeader(req)
-		respData := utils.Request(client, req)
+		respData, err := utils.Request(client, req, 0)
+		if err != nil{
+			result.Err = err
+		}
 		animResp := &model.AnimationResult{}
 		err = json.Unmarshal(respData, animResp)
 		if err != nil {
@@ -194,8 +197,11 @@ func getTotalPages() int {
 	req, _ := http.NewRequest(http.MethodGet, u, nil)
 	utils.BuildHeader(req)
 	animResp := &model.AnimationResult{}
-	respData := utils.Request(client, req)
-	err := json.Unmarshal(respData, animResp)
+	respData, err := utils.Request(client, req, 0)
+	if err != nil{
+		log.Fatalln(err)
+	}
+	err = json.Unmarshal(respData, animResp)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -339,7 +345,11 @@ func monitor(dt *model.DownloadTask) error {
 			return nil
 		case "processing":
 			time.Sleep(5 * time.Second)
-			respData := utils.Request(client, req)
+			respData, err := utils.Request(client, req, 0)
+			if err != nil{
+				dt.Error = err
+				return err
+			}
 			exp := &model.Monitor{}
 			err = json.Unmarshal(respData, exp)
 			if err != nil {
@@ -362,7 +372,11 @@ func getProduct(dt *model.DownloadTask) error {
 	var err error
 	req, _ := http.NewRequest(http.MethodGet, dt.GetProductURL, nil)
 	utils.BuildHeader(req)
-	respData := utils.Request(client, req)
+	respData, err := utils.Request(client, req, 0)
+	if err != nil{
+		dt.Error = err
+		return err
+	}
 	err = json.Unmarshal(respData, prod)
 	if err != nil {
 		dt.Error = fmt.Errorf("get product err, err=%v", err)
@@ -376,9 +390,13 @@ func exportAnim(dt *model.DownloadTask) error {
 	body := getExportBody(dt)
 	req, _ := http.NewRequest(http.MethodPost, config.ExportAnimationURL, bytes.NewBuffer(body))
 	utils.BuildHeader(req)
-	respData := utils.Request(client, req)
+	respData, err := utils.Request(client, req, 0)
+	if err != nil{
+		dt.Error = err
+		return err
+	}
 	exp := &model.Monitor{}
-	err := json.Unmarshal(respData, exp)
+	err = json.Unmarshal(respData, exp)
 	if err != nil {
 		dt.Error = fmt.Errorf("export anim err, err=%v", err)
 		return err
