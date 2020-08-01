@@ -58,7 +58,7 @@ func (t *TaskManager) Start() *sync.WaitGroup {
 			c <- -1
 			wg.Done()
 		}()
-		time.Sleep(5*time.Second)
+		time.Sleep(1*time.Second)
 	}
 	return wg
 }

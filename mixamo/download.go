@@ -224,7 +224,7 @@ func Download(dls []*model.DownloadTask) {
 		var tp interface{} = *(dls[i])
 		tps = append(tps, &tp)
 	}
-	tm := task_manager.NewTaskManager(2*time.Second, task_manager.NewTask(tps, handleDownload), GoroutineCount)
+	tm := task_manager.NewTaskManager(200*time.Microsecond, task_manager.NewTask(tps, handleDownload), GoroutineCount)
 	tm.Start().Wait()
 	result := tm.GetTaskResult()
 	for k, v := range result {
