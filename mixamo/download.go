@@ -71,10 +71,11 @@ func main() {
 	start, step := 0, Step
 	for start < len(Animations) {
 		end := start + step
+		Log(Important, fmt.Sprintf("start range %d ~ %d", start, end-1))
 		if recordF != nil {
 			recordF.Close()
 		}
-		RecordFile = fmt.Sprintf("record_%d_%d.txt", start, end-1)
+		RecordFile = fmt.Sprintf("record_%d_%d_%s.txt", start, end-1, time.Now().Format("06 15-04-05"))
 		recordF, err = os.OpenFile(filepath.Join(config.DataDir, RecordFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			Log(Error, err)
@@ -85,7 +86,6 @@ func main() {
 		}
 		anims := Animations[start : start+step]
 		dls := genDLTaskList(anims)
-		initCharacterDirs(dls)
 		Download(dls)
 		start = end
 		Log(Important, fmt.Sprintf("finish range %d ~ %d", start, end-1))
@@ -93,17 +93,44 @@ func main() {
 	return
 }
 
-func initCharacterDirs(dls []*model.DownloadTask) {
-	for i, _ := range dls {
-		path := filepath.Join(config.DataDir, strings.ReplaceAll(dls[i].CharacterName, "/", " "))
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			err := os.Mkdir(path, os.ModeDir|os.ModePerm)
-			if err != nil {
-				log.Fatalln(err)
-			}
-		}
-		dls[i].DataDirPath = path
+func checkExist(fPath string) bool {
+	if info, err := os.Stat(fPath); !os.IsNotExist(err) && info.Size() > 0 {
+		// file exist
+		err = fmt.Errorf("duplicated download")
+		return true
 	}
+	return false
+}
+
+func genDLTaskList(anims []*model.Animation) []*model.DownloadTask {
+	dls := make([]*model.DownloadTask, 0)
+	skipCount := 0
+	for i, _ := range anims {
+		a := anims[i]
+		for id, ch := range config.IDCharacters {
+			dt := &model.DownloadTask{
+				CharacterName: ch,
+				CharacterID:   id,
+				GetProductURL: fmt.Sprintf(config.GetProductURL, a.Id, id),
+				Animation:     a,
+				DataDirPath:   filepath.Join(config.DataDir, strings.ReplaceAll(ch, "/", " ")),
+			}
+			if _, err := os.Stat(dt.DataDirPath); os.IsNotExist(err) {
+				err := os.Mkdir(dt.DataDirPath, os.ModeDir|os.ModePerm)
+				if err != nil {
+					log.Fatalln(err)
+				}
+			}
+			if checkExist(dt.GetFilePath()) {
+				skipCount++
+				//Log(Info, fmt.Sprintf("skip c: %s, a:%s", dt.CharacterID, dt.Animation.Id))
+				continue
+			}
+			dls = append(dls, dt)
+		}
+	}
+	Log(Important, fmt.Sprintf("skip %d finished tasks", skipCount))
+	return dls
 }
 
 var mu = &sync.Mutex{}
@@ -161,13 +188,15 @@ func InitAnimationList() {
 		req, _ := http.NewRequest(http.MethodGet, u, nil)
 		utils.BuildHeader(req)
 		respData, err := utils.Request(client, req, 0)
-		if err != nil{
+		if err != nil {
 			result.Err = err
+			return result
 		}
 		animResp := &model.AnimationResult{}
 		err = json.Unmarshal(respData, animResp)
 		if err != nil {
 			result.Err = err
+			return result
 		}
 		result.Result = animResp
 		Log(Info, "totalPage = %d, current page = %d, result count=%d\n", totalPage, page, animResp.Pagination.NumResults)
@@ -198,7 +227,7 @@ func getTotalPages() int {
 	utils.BuildHeader(req)
 	animResp := &model.AnimationResult{}
 	respData, err := utils.Request(client, req, 0)
-	if err != nil{
+	if err != nil {
 		log.Fatalln(err)
 	}
 	err = json.Unmarshal(respData, animResp)
@@ -208,29 +237,14 @@ func getTotalPages() int {
 	return animResp.Pagination.NumPages
 }
 
-func genDLTaskList(anims []*model.Animation) []*model.DownloadTask {
-	dls := make([]*model.DownloadTask, 0)
-	for i, _ := range anims {
-		a := anims[i]
-		for id, ch := range config.IDCharacters {
-			dls = append(dls, &model.DownloadTask{
-				CharacterName: ch,
-				CharacterID:   id,
-				GetProductURL: fmt.Sprintf(config.GetProductURL, a.Id, id),
-				Animation:     a,
-			})
-		}
-	}
-	return dls
-}
-
 func Download(dls []*model.DownloadTask) {
 	tps := make([]*task_manager.TaskParam, 0)
 	for i := 0; i < len(dls); i++ {
 		var tp interface{} = *(dls[i])
 		tps = append(tps, &tp)
 	}
-	tm := task_manager.NewTaskManager(200*time.Microsecond, task_manager.NewTask(tps, handleDownload), GoroutineCount)
+	Log(Info, len(tps), "tasks, Start!")
+	tm := task_manager.NewTaskManager(200*time.Millisecond, task_manager.NewTask(tps, handleDownload), GoroutineCount)
 	tm.Start().Wait()
 	result := tm.GetTaskResult()
 	for k, v := range result {
@@ -242,29 +256,11 @@ func Download(dls []*model.DownloadTask) {
 	}
 }
 
-func checkExist(dt *model.DownloadTask) bool {
-	fPath := filepath.Join(dt.DataDirPath, dt.Animation.Name)
-	if dt.Animation.Type == "Motion" {
-		fPath += ".fbx"
-	} else {
-		fPath += ".zip"
-	}
-	if info, err := os.Stat(fPath); !os.IsNotExist(err) && info.Size() > 0 {
-		// file exist
-		err = fmt.Errorf("duplicated download")
-		return true
-	}
-	return false
-}
-
-func handleDownload(p *task_manager.TaskParam) *task_manager.TaskResult {
+func handleDownload(p *task_manager.TaskParam) (result *task_manager.TaskResult) {
 	var err error
-	result := &task_manager.TaskResult{}
+	result = &task_manager.TaskResult{}
 	d, ok := (*p).(model.DownloadTask)
 	dt := &d
-	if checkExist(dt) {
-		return result
-	}
 	Log(Info, fmt.Sprintf("start c: %s, a:%s", dt.CharacterID, dt.Animation.Id))
 	if !ok {
 		result.Err = fmt.Errorf("format param error")
@@ -314,12 +310,12 @@ func downloadAws(dt *model.DownloadTask) error {
 	}
 	defer resp.Body.Close()
 
-	if info, err := os.Stat(dt.FilePath); !os.IsNotExist(err) && info.Size() > 0 {
+	if info, err := os.Stat(dt.GetFilePath()); !os.IsNotExist(err) && info.Size() > 0 {
 		// file exist
 		err = fmt.Errorf("duplicated download")
 		return err
 	}
-	out, err := os.Create(dt.FilePath)
+	out, err := os.Create(dt.GetFilePath())
 	if err != nil {
 		Log(Error, err)
 	}
@@ -341,12 +337,18 @@ func monitor(dt *model.DownloadTask) error {
 		case "completed":
 			dt.AwsURL = dt.Monitor.JobResult
 			eUrl, _ := url.PathUnescape(dt.AwsURL)
-			dt.FilePath = filepath.Join(dt.DataDirPath, re.FindStringSubmatch(eUrl)[1])
+			fName := filepath.Join(dt.DataDirPath, re.FindStringSubmatch(eUrl)[1])
+			fExt := filepath.Ext(fName)
+			fN := fName[:len(fName)-len(fExt)]
+			target := fmt.Sprintf(model.FinalFileFormat, fN, dt.Animation.Id) + "." + fExt
+			if checkExist(target) {
+				Log(Error, "conflict target file, target=", target)
+			}
 			return nil
 		case "processing":
 			time.Sleep(5 * time.Second)
 			respData, err := utils.Request(client, req, 0)
-			if err != nil{
+			if err != nil {
 				dt.Error = err
 				return err
 			}
@@ -373,7 +375,7 @@ func getProduct(dt *model.DownloadTask) error {
 	req, _ := http.NewRequest(http.MethodGet, dt.GetProductURL, nil)
 	utils.BuildHeader(req)
 	respData, err := utils.Request(client, req, 0)
-	if err != nil{
+	if err != nil {
 		dt.Error = err
 		return err
 	}
@@ -391,7 +393,7 @@ func exportAnim(dt *model.DownloadTask) error {
 	req, _ := http.NewRequest(http.MethodPost, config.ExportAnimationURL, bytes.NewBuffer(body))
 	utils.BuildHeader(req)
 	respData, err := utils.Request(client, req, 0)
-	if err != nil{
+	if err != nil {
 		dt.Error = err
 		return err
 	}

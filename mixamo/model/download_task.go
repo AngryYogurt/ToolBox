@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"path/filepath"
 )
 
 type DownloadTask struct {
@@ -12,7 +13,7 @@ type DownloadTask struct {
 	Monitor       *Monitor   `json:"monitor"`
 	MonitorURL    string     `json:"monitor_url"`
 	AwsURL        string     `json:"aws_url"`
-	FilePath      string     `json:"file_name"`
+	FilePath      string     `json:"file_path"`
 	Animation     *Animation `json:"animation"`
 
 	IsDone bool  `json:"is_done"`
@@ -22,6 +23,25 @@ type DownloadTask struct {
 	ExportBody  string
 	Step        string
 	Written     int64
+}
+
+const(
+	FinalFileFormat = "%s---%s"
+)
+
+func (t *DownloadTask) GetFilePath() string {
+	if len(t.FilePath) > 0 {
+		return t.FilePath
+	}
+	fPath := filepath.Join(t.DataDirPath, t.Animation.Name)
+	fPath = fmt.Sprintf(FinalFileFormat, fPath, t.Animation.Id)
+	if t.Animation.Type == "Motion" {
+		fPath += ".fbx"
+	} else {
+		fPath += ".zip"
+	}
+	t.FilePath = fPath
+	return t.FilePath
 }
 
 func (t *DownloadTask) ToString() string {
