@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/AngryYogurt/ToolBox/mixamo/config"
+	"github.com/AngryYogurt/ToolBox/mixamo/constant"
 	"github.com/AngryYogurt/ToolBox/mixamo/model"
 	"github.com/AngryYogurt/ToolBox/mixamo/utils"
 	"github.com/AngryYogurt/ToolBox/task_manager"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,7 +42,7 @@ func init() {
 	})
 
 	failedFile := fmt.Sprintf("failed_%s.txt", time.Now().Format("0102-15_04_05"))
-	failedF, _ = os.OpenFile(filepath.Join(config.DataDir, failedFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0755)
+	failedF, _ = os.OpenFile(filepath.Join(constant.DataDir, failedFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0755)
 }
 
 const (
@@ -106,9 +108,9 @@ func genDLTaskList(anims []*model.Animation) []*model.DownloadTask {
 			dt := &model.DownloadTask{
 				CharacterName: ch,
 				CharacterID:   id,
-				GetProductURL: fmt.Sprintf(config.GetProductURL, a.Id, id),
+				GetProductURL: fmt.Sprintf(constant.GetProductURL, a.Id, id),
 				Animation:     a,
-				LocationDir:   filepath.Join(config.DataDir, strings.ReplaceAll(ch, "/", " ")),
+				LocationDir:   filepath.Join(constant.DataDir, strings.ReplaceAll(ch, "/", " ")),
 			}
 			if _, err := os.Stat(dt.LocationDir); os.IsNotExist(err) {
 				err := os.Mkdir(dt.LocationDir, os.ModeDir|os.ModePerm)
@@ -148,14 +150,14 @@ func writeFailedRecord(line string) {
 }
 
 func writeFile(data string, fileName string) {
-	path, _ := filepath.Abs(config.DataDir)
+	path, _ := filepath.Abs(constant.DataDir)
 	f, _ := os.Create(filepath.Join(path, fileName))
 	f.WriteString(data)
 	defer f.Close()
 }
 
 func readFile(fileName string) string {
-	path, _ := filepath.Abs(config.DataDir)
+	path, _ := filepath.Abs(constant.DataDir)
 	fData, err := ioutil.ReadFile(filepath.Join(path, fileName))
 	if err != nil {
 		log.Fatalln(err)
@@ -163,28 +165,18 @@ func readFile(fileName string) string {
 	return string(fData)
 }
 
-// Step 1: get animation list
-func InitAnimationList() {
-	animationData := readFile(config.AnimationListFile)
-	animationData2 := readFile(config.AnimationListFile2)
-	am := make(map[string]bool)
-
-	fmt.Println(len(Animations))
-	fmt.Println(len(am))
-	if len(animationData) > 0 {
-		tmp := make([]*model.Animation, 0)
-		json.Unmarshal([]byte(animationData), &tmp)
-		for _, a := range tmp {
-			am[a.Id+a.Name] = true
-		}
-		tmp = make([]*model.Animation, 0)
-		json.Unmarshal([]byte(animationData2), &tmp)
-		for _, a := range tmp {
-			am[a.Id+a.Name] = true
-		}
-
-		return
+func marshalAnim(f string, am map[string]*model.Animation) map[string]*model.Animation {
+	animationData := readFile(f)
+	tmp := make([]*model.Animation, 0)
+	_ = json.Unmarshal([]byte(animationData), &tmp)
+	for i, a := range tmp {
+		am[a.Id+a.Name] = tmp[i]
 	}
+	return am
+}
+
+// Prepare animation list file, only for first time running this script
+func PullAnimationList() {
 	totalPage := getTotalPages()
 	tps := make([]*task_manager.TaskParam, 0)
 	for i := 1; i <= totalPage; i++ {
@@ -199,7 +191,7 @@ func InitAnimationList() {
 			result.Err = fmt.Errorf("format param error")
 			return result
 		}
-		u := fmt.Sprintf(config.AnimationListURL, page)
+		u := fmt.Sprintf(constant.AnimationListURL, page)
 		req, _ := http.NewRequest(http.MethodGet, u, nil)
 		utils.BuildHeader(req)
 		respData, err := utils.Request(client, req, 0)
@@ -232,12 +224,40 @@ func InitAnimationList() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	writeFile(string(animData), config.AnimationListFile2)
+	writeFile(string(animData), constant.AnimationListFile)
+}
+
+// Step 1: get animation list
+func InitAnimationList() {
+	readFile(constant.AllAnimationListFile)
+	am := make(map[string]*model.Animation)
+	am = marshalAnim(constant.AnimationListFile, am)
+	am = marshalAnim(constant.AnimationListFile2, am)
+	am = marshalAnim(constant.AnimationListFile3, am)
+	am = marshalAnim(constant.AnimationListFile4, am)
+	am = marshalAnim(constant.AnimationListFile5, am)
+	Animations = make([]*model.Animation, 0, len(am))
+	for k, _ := range am {
+		if am[k] == nil {
+			fmt.Println()
+		}
+		Animations = append(Animations, am[k])
+	}
+
+	sort.Slice(Animations, func(i, j int) bool {
+		return Animations[i].Name+Animations[i].Id < Animations[j].Name+Animations[j].Id
+	})
+
+	animData, err := json.MarshalIndent(Animations, "", "  ")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	writeFile(string(animData), constant.AllAnimationListFile)
 }
 
 func getTotalPages() int {
 	page := 1
-	u := fmt.Sprintf(config.AnimationListURL, page)
+	u := fmt.Sprintf(constant.AnimationListURL, page)
 	req, _ := http.NewRequest(http.MethodGet, u, nil)
 	utils.BuildHeader(req)
 	animResp := &model.AnimationResult{}
@@ -343,7 +363,7 @@ func downloadAws(dt *model.DownloadTask) error {
 
 func monitor(dt *model.DownloadTask) error {
 	var err error
-	req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf(config.MonitorURL, dt.CharacterID), nil)
+	req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf(constant.MonitorURL, dt.CharacterID), nil)
 	utils.BuildHeader(req)
 	for {
 		switch dt.Monitor.Status {
@@ -404,7 +424,7 @@ func getProduct(dt *model.DownloadTask) error {
 
 func exportAnim(dt *model.DownloadTask) error {
 	body := getExportBody(dt)
-	req, _ := http.NewRequest(http.MethodPost, config.ExportAnimationURL, bytes.NewBuffer(body))
+	req, _ := http.NewRequest(http.MethodPost, constant.ExportAnimationURL, bytes.NewBuffer(body))
 	utils.BuildHeader(req)
 	respData, err := utils.Request(client, req, 0)
 	if err != nil {
@@ -454,16 +474,16 @@ func getExportBody(t *model.DownloadTask) []byte {
 		ProductName: t.Product.Name,
 		Preferences: &Preferences{
 			Format:   "fbx7",
-			Fps:      config.Fps,
+			Fps:      constant.Fps,
 			Reducekf: "0",
 		},
 	}
 	if b.Type == "Motion" {
 		b.GmsHash = convertGmsHash(t.Product.Details.GmsHash)
-		b.Preferences.Skin = config.WithSkin
+		b.Preferences.Skin = constant.WithSkin
 	} else {
 		b.GmsHash = convertGmsHashs(t.Product.Details.Motions)
-		b.Preferences.MeshMotionpack = config.MeshMotionpack
+		b.Preferences.MeshMotionpack = constant.MeshMotionpack
 	}
 	res, _ := json.Marshal(b)
 	t.ExportBody = string(res)
