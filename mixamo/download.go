@@ -29,7 +29,7 @@ var re *regexp.Regexp
 
 var recordF, failedF *os.File
 var GoroutineCount = 100
-var Step = 10
+var Step = 50
 
 func init() {
 	re = regexp.MustCompile(`(?m).*filename="(.+?\..+?)".*`)
@@ -65,27 +65,28 @@ func Log(level int, v ...interface{}) {
 func main() {
 	defer recordF.Close()
 	InitAnimationList()
-	start := 0
-	for start < len(Animations) {
-		end := start + Step
-		if end > len(Animations) {
-			end = len(Animations)
-		}
-		Log(Important, fmt.Sprintf("start range %d ~ %d", start, end-1))
 
-		if recordF != nil {
-			recordF.Close()
-		}
-		recordFile := fmt.Sprintf("record_%d_%d_%s.txt", start, end-1, time.Now().Format("0102-15_04_05"))
-		recordF, _ = os.OpenFile(filepath.Join(config.DataDir, recordFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0755)
-
-		dls := genDLTaskList(Animations[start:end])
-		Download(dls)
-
-		Log(Important, fmt.Sprintf("finish range %d ~ %d", start, end-1))
-		start = end
-		time.Sleep(5 * time.Second)
-	}
+	//start := 0
+	//for start < len(Animations) {
+	//	end := start + Step
+	//	if end > len(Animations) {
+	//		end = len(Animations)
+	//	}
+	//	Log(Important, fmt.Sprintf("start range %d ~ %d", start, end-1))
+	//
+	//	if recordF != nil {
+	//		recordF.Close()
+	//	}
+	//	recordFile := fmt.Sprintf("record_%d_%d_%s.txt", start, end-1, time.Now().Format("0102-15_04_05"))
+	//	recordF, _ = os.OpenFile(filepath.Join(config.DataDir, recordFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0755)
+	//
+	//	dls := genDLTaskList(Animations[start:end])
+	//	Download(dls)
+	//
+	//	Log(Important, fmt.Sprintf("finish range %d ~ %d", start, end-1))
+	//	start = end
+	//	time.Sleep(5 * time.Second)
+	//}
 	return
 }
 
@@ -165,13 +166,24 @@ func readFile(fileName string) string {
 // Step 1: get animation list
 func InitAnimationList() {
 	animationData := readFile(config.AnimationListFile)
+	animationData2 := readFile(config.AnimationListFile2)
+	am := make(map[string]bool)
+
+	fmt.Println(len(Animations))
+	fmt.Println(len(am))
 	if len(animationData) > 0 {
-		err := json.Unmarshal([]byte(animationData), &Animations)
-		if err == nil {
-			return
-		} else {
-			log.Fatalln(err)
+		tmp := make([]*model.Animation, 0)
+		json.Unmarshal([]byte(animationData), &tmp)
+		for _, a := range tmp {
+			am[a.Id+a.Name] = true
 		}
+		tmp = make([]*model.Animation, 0)
+		json.Unmarshal([]byte(animationData2), &tmp)
+		for _, a := range tmp {
+			am[a.Id+a.Name] = true
+		}
+
+		return
 	}
 	totalPage := getTotalPages()
 	tps := make([]*task_manager.TaskParam, 0)
@@ -202,9 +214,9 @@ func InitAnimationList() {
 			return result
 		}
 		result.Result = animResp
-		Log(Info, "totalPage = %d, current page = %d, result count=%d\n", totalPage, page, animResp.Pagination.NumResults)
+		Log(Info, fmt.Sprintf("totalPage = %d, current page = %d, result count=%d\n", totalPage, page, animResp.Pagination.NumResults))
 		return result
-	}), 2)
+	}), 15)
 	tm.Start().Wait()
 	results := tm.GetTaskResult()
 	animRes := make([]*model.AnimationResult, totalPage)
@@ -220,7 +232,7 @@ func InitAnimationList() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	writeFile(string(animData), config.AnimationListFile)
+	writeFile(string(animData), config.AnimationListFile2)
 }
 
 func getTotalPages() int {
@@ -252,7 +264,7 @@ func Download(dls []*model.DownloadTask) {
 	result := tm.GetTaskResult()
 	for k, v := range result {
 		if v.Err != nil {
-			dt, _ := (result[k].Result).(model.DownloadTask)
+			dt, _ := (*k).(model.DownloadTask)
 			writeFailedRecord(fmt.Sprintf("%s|%s", dt.CharacterID, dt.Animation.Id))
 			Log(Error, fmt.Sprintf("err=%v, failed task: %s", v.Err, dt.ToString()))
 		}
@@ -264,6 +276,7 @@ func handleDownload(p *task_manager.TaskParam) (result *task_manager.TaskResult)
 	result = &task_manager.TaskResult{}
 	d, ok := (*p).(model.DownloadTask)
 	dt := &d
+	result.Result = dt
 	Log(Info, fmt.Sprintf("start c: %s, a:%s", dt.CharacterID, dt.Animation.Id))
 	if !ok {
 		result.Err = fmt.Errorf("format param error")
@@ -301,7 +314,6 @@ func handleDownload(p *task_manager.TaskParam) (result *task_manager.TaskResult)
 	writeRecord(fmt.Sprintf("%s|%s\n", dt.CharacterID, dt.Animation.Id))
 	dt.IsDone = true
 	Log(Info, fmt.Sprintf("finish proc task=%s|%s", dt.CharacterID, dt.Animation.Id))
-	result.Result = dt
 	return result
 }
 

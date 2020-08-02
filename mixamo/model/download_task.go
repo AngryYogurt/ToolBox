@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 type DownloadTask struct {
@@ -43,7 +44,7 @@ func (t *DownloadTask) GetTargetPath() string {
 	if t.Animation.Type != "Motion" {
 		ext = ".zip"
 	}
-	fPath := filepath.Join(t.LocationDir, t.Animation.Name)
+	fPath := filepath.Join(t.LocationDir, strings.ReplaceAll(t.Animation.Name, "/", "_"))
 	fPath = fmt.Sprintf(FinalFileFormat, fPath, t.Animation.Id)
 	t.TempFullPath = fPath + ".tmp" + ext
 	t.TargetFullPath = fPath + ext

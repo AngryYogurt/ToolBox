@@ -49,6 +49,7 @@ func (t *TaskManager) Start() *sync.WaitGroup {
 	for i := 0; i < t.WorkerCount; i++ {
 		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			p := <-c
 			for p >= 0 {
 				time.Sleep(t.Interval)
@@ -56,7 +57,6 @@ func (t *TaskManager) Start() *sync.WaitGroup {
 				p = <-c
 			}
 			c <- -1
-			wg.Done()
 		}()
 		time.Sleep(200 * time.Millisecond)
 	}
