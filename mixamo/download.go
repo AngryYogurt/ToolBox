@@ -68,27 +68,27 @@ func main() {
 	defer recordF.Close()
 	InitAnimationList()
 
-	//start := 0
-	//for start < len(Animations) {
-	//	end := start + Step
-	//	if end > len(Animations) {
-	//		end = len(Animations)
-	//	}
-	//	Log(Important, fmt.Sprintf("start range %d ~ %d", start, end-1))
-	//
-	//	if recordF != nil {
-	//		recordF.Close()
-	//	}
-	//	recordFile := fmt.Sprintf("record_%d_%d_%s.txt", start, end-1, time.Now().Format("0102-15_04_05"))
-	//	recordF, _ = os.OpenFile(filepath.Join(config.DataDir, recordFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0755)
-	//
-	//	dls := genDLTaskList(Animations[start:end])
-	//	Download(dls)
-	//
-	//	Log(Important, fmt.Sprintf("finish range %d ~ %d", start, end-1))
-	//	start = end
-	//	time.Sleep(5 * time.Second)
-	//}
+	start := 0
+	for start < len(Animations) {
+		end := start + Step
+		if end > len(Animations) {
+			end = len(Animations)
+		}
+		Log(Important, fmt.Sprintf("start range %d ~ %d", start, end-1))
+
+		if recordF != nil {
+			recordF.Close()
+		}
+		recordFile := fmt.Sprintf("record_%d_%d_%s.txt", start, end-1, time.Now().Format("0102-15_04_05"))
+		recordF, _ = os.OpenFile(filepath.Join(constant.DataDir, recordFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0755)
+
+		dls := genDLTaskList(Animations[start:end])
+		Download(dls)
+
+		Log(Important, fmt.Sprintf("finish range %d ~ %d", start, end-1))
+		start = end
+		time.Sleep(5 * time.Second)
+	}
 	return
 }
 
@@ -229,7 +229,12 @@ func PullAnimationList() {
 
 // Step 1: get animation list
 func InitAnimationList() {
-	readFile(constant.AllAnimationListFile)
+	animD := readFile(constant.AllAnimationListFile)
+	if len(animD) > 0 {
+		_ = json.Unmarshal([]byte(animD), &Animations)
+		return
+	}
+
 	am := make(map[string]*model.Animation)
 	am = marshalAnim(constant.AnimationListFile, am)
 	am = marshalAnim(constant.AnimationListFile2, am)
